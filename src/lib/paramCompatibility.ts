@@ -4,10 +4,14 @@ import { normalizeImageSize } from './size'
 
 export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
 export const MAX_FAL_OUTPUT_IMAGES = 4
+export const MAX_APIMART_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
 export function getOutputImageLimitForSettings(settings: AppSettings) {
-  return getActiveApiProfile(settings).provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES
+  const provider = getActiveApiProfile(settings).provider
+  if (provider === 'fal') return MAX_FAL_OUTPUT_IMAGES
+  if (provider === 'apimart') return MAX_APIMART_OUTPUT_IMAGES
+  return MAX_OPENAI_OUTPUT_IMAGES
 }
 
 export function normalizeParamsForSettings(
@@ -30,6 +34,11 @@ export function normalizeParamsForSettings(
   if (activeProfile.provider === 'fal') {
     if (!options.hasInputImages && nextParams.size === 'auto') nextParams.size = DEFAULT_FAL_IMAGE_SIZE
     if (nextParams.quality === 'auto') nextParams.quality = 'high'
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+  }
+
+  if (activeProfile.provider === 'apimart') {
     nextParams.moderation = DEFAULT_PARAMS.moderation
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }

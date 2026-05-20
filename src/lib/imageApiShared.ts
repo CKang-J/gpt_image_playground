@@ -18,6 +18,7 @@ export interface CallApiOptions {
   maskDataUrl?: string
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
+  onApimartTaskEnqueued?: (task: { taskId: string }) => void
 }
 
 export interface CallApiResult {

@@ -32,6 +32,7 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { getApimartQueuedImageResult } from './lib/apimartImageApi'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
@@ -55,6 +56,7 @@ const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const apimartRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
@@ -673,7 +675,7 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
-    if (!isRunningOpenAITask(task) || task.customTaskId) return task
+    if (!isRunningOpenAITask(task) || task.customTaskId || task.apimartTaskId) return task
 
     const updated: TaskRecord = {
       ...task,
@@ -757,9 +759,22 @@ function getFalRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   ) ?? normalized.profiles.find((profile) => profile.provider === 'fal') ?? null
 }
 
+function getApimartRecoveryProfile(settings: AppSettings, task: TaskRecord) {
+  const taskProfile = getTaskApiProfile(settings, task)
+  if (taskProfile?.provider === 'apimart') return taskProfile
+
+  const normalized = normalizeSettings(settings)
+  const active = getActiveApiProfile(normalized)
+  if (active.provider === 'apimart') return active
+  return normalized.profiles.find((profile) =>
+    profile.provider === 'apimart' &&
+    (profile.name === task.apiProfileName || profile.model === task.apiModel),
+  ) ?? normalized.profiles.find((profile) => profile.provider === 'apimart') ?? null
+}
+
 function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const provider = task.apiProvider
-  if (!provider || provider === 'openai' || provider === 'fal') return null
+  if (!provider || provider === 'openai' || provider === 'fal' || provider === 'apimart') return null
   const taskProfile = getTaskApiProfile(settings, task)
   if (taskProfile?.provider === provider) return taskProfile
 
@@ -891,6 +906,21 @@ function scheduleFalRecovery(taskId: string, delayMs = FAL_RECOVERY_POLL_MS) {
   falRecoveryTimers.set(taskId, timer)
 }
 
+function clearApimartRecoveryTimer(taskId: string) {
+  const timer = apimartRecoveryTimers.get(taskId)
+  if (timer) clearTimeout(timer)
+  apimartRecoveryTimers.delete(taskId)
+}
+
+function scheduleApimartRecovery(taskId: string, delayMs = CUSTOM_RECOVERY_POLL_MS) {
+  if (apimartRecoveryTimers.has(taskId)) return
+  const timer = setTimeout(() => {
+    apimartRecoveryTimers.delete(taskId)
+    recoverApimartTask(taskId)
+  }, delayMs)
+  apimartRecoveryTimers.set(taskId, timer)
+}
+
 function clearCustomRecoveryTimer(taskId: string) {
   const timer = customRecoveryTimers.get(taskId)
   if (timer) clearTimeout(timer)
@@ -990,6 +1020,33 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
   useStore.getState().showToast(`fal.ai 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
 }
 
+async function completeRecoveredApimartTask(task: TaskRecord, result: Awaited<ReturnType<typeof getApimartQueuedImageResult>>) {
+  const latest = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!latest || latest.status === 'done') return
+
+  const actualParamsList = await readImageSizeParamsList(result.images)
+  const outputIds: string[] = []
+  for (const dataUrl of result.images) {
+    const imgId = await storeImage(dataUrl, 'generated')
+    cacheImage(imgId, dataUrl)
+    outputIds.push(imgId)
+  }
+
+  updateTaskInStore(task.id, {
+    outputImages: outputIds,
+    rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
+    actualParams: firstActualParams(actualParamsList),
+    actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+    revisedPromptByImage: undefined,
+    status: 'done',
+    error: null,
+    apimartRecoverable: false,
+    finishedAt: Date.now(),
+    elapsed: Date.now() - task.createdAt,
+  })
+  useStore.getState().showToast(`APIMart 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+}
+
 async function recoverFalTask(taskId: string) {
   const { settings, tasks } = useStore.getState()
   const task = tasks.find((item) => item.id === taskId)
@@ -1024,6 +1081,39 @@ async function recoverFalTask(taskId: string) {
   }
 }
 
+async function recoverApimartTask(taskId: string) {
+  const { settings, tasks } = useStore.getState()
+  const task = tasks.find((item) => item.id === taskId)
+  if (!task || task.apiProvider !== 'apimart' || !task.apimartTaskId || task.status === 'done') return
+
+  const profile = getApimartRecoveryProfile(settings, task)
+  if (!profile) {
+    scheduleApimartRecovery(taskId)
+    return
+  }
+
+  try {
+    const result = await getApimartQueuedImageResult(profile, task.apimartTaskId, task.params)
+    clearApimartRecoveryTimer(taskId)
+    await completeRecoveredApimartTask(task, result)
+  } catch (err) {
+    if (isFalConnectionRecoverableError(err)) {
+      scheduleApimartRecovery(taskId)
+      return
+    }
+
+    clearApimartRecoveryTimer(taskId)
+    updateTaskInStore(taskId, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      ...getRawErrorPayload(err),
+      apimartRecoverable: false,
+      finishedAt: Date.now(),
+      elapsed: Date.now() - task.createdAt,
+    })
+  }
+}
+
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
   const storedTasks = await getAllTasks()
@@ -1039,6 +1129,13 @@ export async function initStore() {
       (task.status === 'running' || task.falRecoverable)
     ) {
       scheduleFalRecovery(task.id, 0)
+    }
+    if (
+      task.apiProvider === 'apimart' &&
+      task.apimartTaskId &&
+      (task.status === 'running' || task.apimartRecoverable)
+    ) {
+      scheduleApimartRecovery(task.id, 0)
     }
     if (
       task.customTaskId &&
@@ -1274,6 +1371,12 @@ async function executeTask(taskId: string) {
           customRecoverable: false,
         })
       },
+      onApimartTaskEnqueued: (request) => {
+        updateTaskInStore(taskId, {
+          apimartTaskId: request.taskId,
+          apimartRecoverable: false,
+        })
+      },
     })
 
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
@@ -1286,7 +1389,7 @@ async function executeTask(taskId: string) {
       cacheImage(imgId, dataUrl)
       outputIds.push(imgId)
     }
-    const isAsyncOpenAICompatibleTask = taskProvider === 'openai' && Boolean(result.asyncTask)
+    const isAsyncOpenAICompatibleTask = (taskProvider === 'openai' || taskProvider === 'apimart') && Boolean(result.asyncTask)
     const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
     const isAsyncTask = isAsyncCustomTask || isAsyncOpenAICompatibleTask
     const actualParamsList = taskProvider === 'fal'
@@ -1332,6 +1435,7 @@ async function executeTask(taskId: string) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
       falRecoverable: false,
+      apimartRecoverable: false,
       customRecoverable: false,
     })
 
@@ -1364,6 +1468,15 @@ async function executeTask(taskId: string) {
         elapsed: Date.now() - task.createdAt,
       })
       scheduleFalRecovery(taskId)
+    } else if (latestTask.apiProvider === 'apimart' && latestTask.apimartTaskId && isFalConnectionRecoverableError(err)) {
+      updateTaskInStore(taskId, {
+        status: 'error',
+        error: '与 APIMart 异步任务的连接已断开，之后会继续查询任务结果。',
+        apimartRecoverable: true,
+        finishedAt: Date.now(),
+        elapsed: Date.now() - task.createdAt,
+      })
+      scheduleApimartRecovery(taskId)
     } else if (latestCustomTaskInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',
@@ -1385,6 +1498,7 @@ async function executeTask(taskId: string) {
         error: errorMessage,
         ...getRawErrorPayload(err),
         falRecoverable: false,
+        apimartRecoverable: false,
         customRecoverable: false,
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,

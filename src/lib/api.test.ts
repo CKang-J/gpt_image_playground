@@ -3,6 +3,8 @@ import { DEFAULT_PARAMS } from '../types'
 import { DEFAULT_SETTINGS } from './apiProfiles'
 import { callImageApi } from './api'
 
+const tinyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+
 describe('callImageApi', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -191,7 +193,6 @@ describe('callImageApi', () => {
   })
 
   it('polls OpenAI-compatible image tasks that return task_id before image URLs', async () => {
-    const transparentPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
         data: [{ task_id: 'task-123' }],
@@ -210,7 +211,7 @@ describe('callImageApi', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }))
-      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(transparentPng), (char) => char.charCodeAt(0)), {
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(tinyPngBase64), (char) => char.charCodeAt(0)), {
         status: 200,
         headers: { 'Content-Type': 'image/png' },
       }))
@@ -230,6 +231,75 @@ describe('callImageApi', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('https://api.apimart.ai/v1/tasks/task-123?language=zh')
     expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
     expect(result.rawImageUrls).toEqual(['https://cdn.example.com/result.png'])
+  })
+
+  it('uses APIMart upload and generation task APIs for image edits', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(tinyPngBase64), (char) => char.charCodeAt(0)), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://cdn.apimart.ai/input.png' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ task_id: 'task-apimart' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          status: 'completed',
+          result: {
+            images: [{ url: ['https://cdn.apimart.ai/result.png'] }],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(tinyPngBase64), (char) => char.charCodeAt(0)), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }))
+    const onApimartTaskEnqueued = vi.fn()
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://api.apimart.ai/v1',
+        model: 'gpt-image-2',
+        apiKey: 'test-key',
+        profiles: [{
+          ...DEFAULT_SETTINGS.profiles[0],
+          id: 'apimart-profile',
+          provider: 'apimart',
+          baseUrl: 'https://api.apimart.ai/v1',
+          apiKey: 'test-key',
+          model: 'gpt-image-2',
+          apiMode: 'images',
+        }],
+        activeProfileId: 'apimart-profile',
+      },
+      prompt: 'edit prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [`data:image/png;base64,${tinyPngBase64}`],
+      onApimartTaskEnqueued,
+    })
+
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.apimart.ai/v1/uploads/images')
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBeInstanceOf(FormData)
+    expect(((fetchMock.mock.calls[1][1] as RequestInit).body as FormData).get('file')).toBeInstanceOf(Blob)
+    expect(fetchMock.mock.calls[2][0]).toBe('https://api.apimart.ai/v1/images/generations')
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'POST' })
+    expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toMatchObject({
+      model: 'gpt-image-2',
+      prompt: 'edit prompt',
+      image_urls: ['https://cdn.apimart.ai/input.png'],
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe('https://api.apimart.ai/v1/tasks/task-apimart?language=zh')
+    expect(onApimartTaskEnqueued).toHaveBeenCalledWith({ taskId: 'task-apimart' })
+    expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
   })
 
   it('ignores stored API proxy settings when the current deployment has no proxy', async () => {

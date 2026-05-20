@@ -4,7 +4,10 @@ import { normalizeBaseUrl } from '../lib/api'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData } from '../store'
 import {
+  createDefaultApimartProfile,
   createDefaultOpenAIProfile,
+  DEFAULT_APIMART_BASE_URL,
+  DEFAULT_APIMART_MODEL,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
@@ -327,16 +330,18 @@ export default function SettingsModal() {
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
-  const apiProxyChecked = activeProfile.provider === 'openai' && (apiProxyLocked || activeProfile.apiProxy)
-  const apiProxyEnabled = apiProxyAvailable && activeProfile.provider === 'openai' && apiProxyChecked
+  const activeProviderSupportsApiProxy = activeProfile.provider === 'openai' || activeProfile.provider === 'apimart'
+  const apiProxyChecked = activeProviderSupportsApiProxy && (apiProxyLocked || activeProfile.apiProxy)
+  const apiProxyEnabled = apiProxyAvailable && activeProviderSupportsApiProxy && apiProxyChecked
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
-  const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'apimart', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
+    { label: 'APIMart', value: 'apimart', draggable: true },
     { label: 'fal.ai', value: 'fal', draggable: true },
     ...draft.customProviders.map((provider) => ({
       label: provider.name,
@@ -385,7 +390,7 @@ export default function SettingsModal() {
       ...displaySettings,
       profiles: displaySettings.profiles.map((profile) => ({
         ...profile,
-        apiProxy: profile.provider === 'openai' && apiProxyAvailable
+        apiProxy: (profile.provider === 'openai' || profile.provider === 'apimart') && apiProxyAvailable
           ? (apiProxyLocked || profile.apiProxy)
           : false,
       })),
@@ -474,15 +479,21 @@ export default function SettingsModal() {
     const normalizedProfiles = nextDraft.profiles.map((profile) => {
       const normalizedBaseUrl = profile.provider === 'fal'
         ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
+        : profile.provider === 'apimart'
+        ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_APIMART_BASE_URL
         : normalizeBaseUrl(profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl)
-      const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode)
+      const defaultModel = profile.provider === 'fal'
+        ? DEFAULT_FAL_MODEL
+        : profile.provider === 'apimart'
+        ? DEFAULT_APIMART_MODEL
+        : getDefaultModelForMode(profile.apiMode)
       return {
         ...profile,
         name: profile.name.trim() || (profile.id === DEFAULT_OPENAI_PROFILE_ID ? '默认' : '新配置'),
         baseUrl: normalizedBaseUrl,
         model: profile.model.trim() || defaultModel,
         timeout: Number(profile.timeout) || DEFAULT_SETTINGS.timeout,
-        apiProxy: profile.provider === 'openai' && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false,
+        apiProxy: (profile.provider === 'openai' || profile.provider === 'apimart') && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false,
         codexCli: profile.provider === 'openai' ? profile.codexCli : false,
       }
     })
@@ -666,7 +677,7 @@ export default function SettingsModal() {
     setDuplicateProfileTooltipVisible(false)
     const profile: ApiProfile = {
       ...activeProfile,
-      id: newId(activeProfile.provider === 'openai' ? 'openai' : 'profile'),
+      id: newId(activeProfile.provider === 'openai' || activeProfile.provider === 'apimart' ? activeProfile.provider : 'profile'),
       name: `${activeProfile.name}（复制）`,
     }
     const nextDraft = normalizeSettings({
@@ -835,7 +846,7 @@ export default function SettingsModal() {
   }
 
   const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
+    const currentOrder = draft.providerOrder || ['openai', 'apimart', 'fal', ...draft.customProviders.map(p => p.id)]
     const sourceIndex = currentOrder.indexOf(String(sourceValue))
     const targetIndex = currentOrder.indexOf(String(targetValue))
     if (sourceIndex < 0 || targetIndex < 0) return
@@ -1402,7 +1413,7 @@ export default function SettingsModal() {
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
                     disabled={apiProxyEnabled}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : activeProfile.provider === 'apimart' ? DEFAULT_APIMART_BASE_URL : DEFAULT_SETTINGS.baseUrl}
                     className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
@@ -1410,6 +1421,8 @@ export default function SettingsModal() {
                       <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
+                    ) : activeProfile.provider === 'apimart' ? (
+                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_APIMART_BASE_URL}</code>。</span>
                     ) : (
                       <span>支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code></span>
                     )}
@@ -1438,7 +1451,7 @@ export default function SettingsModal() {
                 </div>
               )}
 
-              {apiProxyAvailable && activeProfile.provider === 'openai' && (
+              {apiProxyAvailable && activeProviderSupportsApiProxy && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
@@ -1470,7 +1483,7 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
+                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : activeProfile.provider === 'apimart' ? 'APIMART_API_KEY' : 'sk-...'}
                     className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                   <button
@@ -1533,12 +1546,14 @@ export default function SettingsModal() {
                   onChange={(e) => updateActiveProfile({ model: e.target.value })}
                   onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
                   type="text"
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProfile.provider === 'apimart' ? DEFAULT_APIMART_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (
                     <>当前适配 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_FAL_MODEL}</code>。</>
+                  ) : activeProfile.provider === 'apimart' ? (
+                    <>当前适配 APIMart <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_APIMART_MODEL}</code>，支持文生图、图生图和遮罩局部重绘。</>
                   ) : activeCustomProvider ? (
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
