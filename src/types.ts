@@ -219,6 +219,7 @@ export interface ImageGenerationRequest {
 export interface ImageResponseItem {
   b64_json?: string
   url?: string
+  task_id?: string
   revised_prompt?: string
   size?: string
   quality?: string

@@ -176,6 +176,62 @@ describe('callImageApi', () => {
     expect((init as RequestInit).cache).toBe('no-store')
   })
 
+  it('explains likely API/proxy misconfiguration when a successful response is HTML', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<!doctype html><html><body>Not the API</body></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    }))
+
+    await expect(callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })).rejects.toThrow('接口返回了 HTML 页面而不是 JSON')
+  })
+
+  it('polls OpenAI-compatible image tasks that return task_id before image URLs', async () => {
+    const transparentPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [{ task_id: 'task-123' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          status: 'completed',
+          result: {
+            images: [{ url: ['https://cdn.example.com/result.png'] }],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(transparentPng), (char) => char.charCodeAt(0)), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }))
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        baseUrl: 'https://api.apimart.ai/v1',
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.apimart.ai/v1/images/generations')
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.apimart.ai/v1/tasks/task-123?language=zh')
+    expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
+    expect(result.rawImageUrls).toEqual(['https://cdn.example.com/result.png'])
+  })
+
   it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

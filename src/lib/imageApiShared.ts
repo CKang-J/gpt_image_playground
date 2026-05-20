@@ -31,6 +31,8 @@ export interface CallApiResult {
   revisedPrompts?: Array<string | undefined>
   /** API 返回的原始图片 HTTP URL（非 base64 时记录） */
   rawImageUrls?: string[]
+  /** OpenAI 兼容接口返回 task_id 后轮询得到结果 */
+  asyncTask?: boolean
 }
 
 export function isHttpUrl(value: unknown): value is string {
@@ -160,6 +162,27 @@ export async function getApiErrorMessage(response: Response): Promise<string> {
     }
   }
   return errorMsg
+}
+
+function createNonJsonResponseMessage(response: Response, text: string): string {
+  const preview = text.trim().replace(/\s+/g, ' ').slice(0, 120)
+  const contentType = response.headers.get('Content-Type') || 'unknown'
+  const receivedHtml = /^\s*<!doctype\s+html/i.test(text) || /^\s*<html[\s>]/i.test(text)
+
+  if (receivedHtml) {
+    return `接口返回了 HTML 页面而不是 JSON（HTTP ${response.status}，Content-Type: ${contentType}）。通常是 API 地址、/v1 路径或代理配置错误，导致请求打到了网页/SPA fallback。请检查设置里的 API 地址和“使用同源 API 代理”配置。响应预览：${preview}`
+  }
+
+  return `接口返回的内容不是有效 JSON（HTTP ${response.status}，Content-Type: ${contentType}）。响应预览：${preview || '(empty)'}`
+}
+
+export async function readJsonResponse<T = unknown>(response: Response): Promise<T> {
+  const text = await response.text()
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(createNonJsonResponseMessage(response, text))
+  }
 }
 
 export function pickActualParams(source: unknown): Partial<TaskParams> {

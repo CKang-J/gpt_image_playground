@@ -16,6 +16,7 @@ import {
   MIME_MAP,
   normalizeBase64Image,
   pickActualParams,
+  readJsonResponse,
 } from './imageApiShared'
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
@@ -68,6 +69,23 @@ function getAllByPath(source: unknown, path: string | undefined): unknown[] {
   }
 
   return current.flatMap((item) => Array.isArray(item) ? item : [item]).filter((item) => item != null)
+}
+
+function readTaskIdFromImagesPayload(payload: ImageApiResponse): string | null {
+  const taskId = payload.data?.find((item) => typeof item.task_id === 'string' && item.task_id.trim())?.task_id
+  return taskId?.trim() || null
+}
+
+function readTaskImageUrls(payload: unknown): string[] {
+  return getAllByPath(payload, 'data.result.images.*.url.*').filter(isHttpUrl)
+}
+
+function getOpenAICompatibleTaskState(payload: unknown): 'success' | 'failure' | 'pending' {
+  const status = getByPath(payload, 'data.status')
+  const normalized = typeof status === 'string' ? status.trim().toLowerCase() : ''
+  if (['completed', 'success', 'succeeded'].includes(normalized)) return 'success'
+  if (['failed', 'failure', 'cancelled', 'canceled'].includes(normalized)) return 'failure'
+  return 'pending'
 }
 
 function normalizeImageApiPayload(value: unknown): ImageApiResponse {
@@ -213,6 +231,76 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
     actualParamsList: images.map(() => actualParams),
     revisedPrompts,
     ...(rawImageUrls.length ? { rawImageUrls } : {}),
+  }
+}
+
+async function parseOpenAICompatibleTaskResult(payload: unknown, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
+  const imageUrls = readTaskImageUrls(payload)
+  const rawImageUrls = imageUrls.filter(isHttpUrl)
+  const images: string[] = []
+  try {
+    for (const url of imageUrls) {
+      images.push(await fetchImageUrlAsDataUrl(url, mime, signal))
+    }
+  } catch (err) {
+    if (rawImageUrls.length > 0 && err instanceof Error) {
+      (err as any).rawImageUrls = rawImageUrls
+    }
+    throw err
+  }
+
+  if (!images.length) {
+    const err = new Error('异步任务已完成，但没有返回可识别的图片 URL。请查看原始响应内容确认服务商实际返回的数据结构。')
+    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    throw err
+  }
+
+  return { images, asyncTask: true, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
+}
+
+async function pollOpenAICompatibleImageTask(
+  profile: ApiProfile,
+  taskId: string,
+  mime: string,
+  signal?: AbortSignal,
+): Promise<CallApiResult> {
+  const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+  const requestHeaders = createRequestHeaders(profile)
+  let firstPoll = true
+
+  while (true) {
+    if (firstPoll) {
+      firstPoll = false
+    } else if (signal) {
+      await sleep(5_000, signal)
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 5_000))
+    }
+
+    const response = await fetch(buildApiUrl(profile.baseUrl, `tasks/${encodeURIComponent(taskId)}?language=zh`, proxyConfig, useApiProxy), {
+      method: 'GET',
+      headers: requestHeaders,
+      cache: 'no-store',
+      signal,
+    })
+
+    if (!response.ok) {
+      if (isRetryablePollingStatus(response.status)) continue
+      throw new Error(await getApiErrorMessage(response))
+    }
+
+    const payload = await readJsonResponse(response)
+    const state = getOpenAICompatibleTaskState(payload)
+    if (state === 'pending') continue
+    if (state === 'failure') {
+      const message = getByPath(payload, 'data.error.message') || getByPath(payload, 'data.fail_reason') || getByPath(payload, 'message') || getByPath(payload, 'error.message')
+      const err = new Error(typeof message === 'string' && message.trim() ? message : '异步图片任务失败')
+      ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+      throw err
+    }
+
+    return parseOpenAICompatibleTaskResult(payload, mime, signal)
   }
 }
 
@@ -381,7 +469,10 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       throw new Error(await getApiErrorMessage(response))
     }
 
-    return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
+    const payload = await readJsonResponse<ImageApiResponse>(response)
+    const taskId = readTaskIdFromImagesPayload(payload)
+    if (taskId) return pollOpenAICompatibleImageTask(profile, taskId, mime, controller.signal)
+    return parseImagesApiResponse(payload, mime, controller.signal)
   } finally {
     clearTimeout(timeoutId)
   }
@@ -581,7 +672,7 @@ async function submitCustomRequest(mapping: CustomProviderSubmitMapping, opts: C
   })
 
   if (!response.ok) throw new Error(await getApiErrorMessage(response))
-  return response.json()
+  return readJsonResponse(response)
 }
 
 async function pollCustomTaskResult(
@@ -619,7 +710,7 @@ async function pollCustomTaskResult(
         throw new Error(await getApiErrorMessage(taskResponse))
       }
 
-      taskPayload = await taskResponse.json()
+      taskPayload = await readJsonResponse(taskResponse)
     } catch (err) {
       if (!signal?.aborted && isRecoverablePollingError(err)) continue
       throw err
@@ -758,7 +849,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       throw new Error(await getApiErrorMessage(response))
     }
 
-    const payload = await response.json() as ResponsesApiResponse
+    const payload = await readJsonResponse<ResponsesApiResponse>(response)
     const imageResults = parseResponsesImageResults(payload, mime)
     const actualParams = mergeActualParams(
       imageResults[0]?.actualParams ?? {},
