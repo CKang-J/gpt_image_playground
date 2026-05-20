@@ -302,6 +302,135 @@ describe('callImageApi', () => {
     expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
   })
 
+  it('sends APIMart generation-only parameters for the standard model', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ task_id: 'task-apimart-standard' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          status: 'completed',
+          result: {
+            images: [{ url: ['https://cdn.apimart.ai/standard-result.png'] }],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(tinyPngBase64), (char) => char.charCodeAt(0)), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://api.apimart.ai/v1',
+        apiKey: 'test-key',
+        model: 'gpt-image-2',
+        profiles: [{
+          ...DEFAULT_SETTINGS.profiles[0],
+          id: 'apimart-standard-profile',
+          provider: 'apimart',
+          baseUrl: 'https://api.apimart.ai/v1',
+          apiKey: 'test-key',
+          model: 'gpt-image-2',
+          apiMode: 'images',
+        }],
+        activeProfileId: 'apimart-standard-profile',
+      },
+      prompt: 'prompt',
+      params: {
+        ...DEFAULT_PARAMS,
+        size: '3840x1280',
+        official_fallback: true,
+        n: 1,
+      },
+      inputImageDataUrls: [],
+    })
+
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
+      model: 'gpt-image-2',
+      prompt: 'prompt',
+      size: '3:1',
+      resolution: '2k',
+      output_format: 'png',
+      quality: 'auto',
+      official_fallback: true,
+    })
+  })
+
+  it('maps APIMart official model parameters to its task generation schema', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ task_id: 'task-apimart-official' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          status: 'completed',
+          result: {
+            images: [{ url: ['https://cdn.apimart.ai/official-result.webp'] }],
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from(atob(tinyPngBase64), (char) => char.charCodeAt(0)), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://api.apimart.ai/v1',
+        apiKey: 'test-key',
+        model: 'gpt-image-2-official',
+        profiles: [{
+          ...DEFAULT_SETTINGS.profiles[0],
+          id: 'apimart-official-profile',
+          provider: 'apimart',
+          baseUrl: 'https://api.apimart.ai/v1',
+          apiKey: 'test-key',
+          model: 'gpt-image-2-official',
+          apiMode: 'images',
+        }],
+        activeProfileId: 'apimart-official-profile',
+      },
+      prompt: 'prompt',
+      params: {
+        ...DEFAULT_PARAMS,
+        size: '2048x2048',
+        quality: 'high',
+        background: 'transparent',
+        output_format: 'webp',
+        output_compression: 80,
+        moderation: 'low',
+        n: 4,
+      },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.apimart.ai/v1/images/generations')
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
+      model: 'gpt-image-2-official',
+      prompt: 'prompt',
+      size: '1:1',
+      resolution: '2k',
+      output_format: 'webp',
+      quality: 'high',
+      background: 'transparent',
+      n: 4,
+      moderation: 'low',
+      output_compression: 80,
+    })
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.apimart.ai/v1/tasks/task-apimart-official?language=zh')
+  })
+
   it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

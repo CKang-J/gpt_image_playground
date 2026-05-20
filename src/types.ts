@@ -92,18 +92,22 @@ export interface AppSettings {
 export interface TaskParams {
   size: string
   quality: 'auto' | 'low' | 'medium' | 'high'
+  background: 'auto' | 'opaque' | 'transparent'
   output_format: 'png' | 'jpeg' | 'webp'
   output_compression: number | null
   moderation: 'auto' | 'low'
+  official_fallback: boolean
   n: number
 }
 
 export const DEFAULT_PARAMS: TaskParams = {
   size: 'auto',
   quality: 'auto',
+  background: 'auto',
   output_format: 'png',
   output_compression: null,
   moderation: 'auto',
+  official_fallback: false,
   n: 1,
 }
 

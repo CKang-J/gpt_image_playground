@@ -465,12 +465,16 @@ export default function InputBar() {
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig)
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
+  const isApimartProvider = activeProvider === 'apimart'
+  const isApimartOfficialModel = isApimartProvider && activeProfile.model.trim().toLowerCase() === 'gpt-image-2-official'
   const moderationDisabled = activeProfile.apiMode === 'responses' || isFalProvider
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nLimitHintText = isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
+    : isApimartProvider
+    ? `APIMart 当前模型最大请求数量为 ${outputImageLimit}`
     : `OpenAI 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
@@ -1582,6 +1586,35 @@ export default function InputBar() {
           text={isFalProvider ? 'fal.ai 不支持审核参数' : 'Responses API 不支持审核参数'}
         />
       </label>
+      {isApimartOfficialModel && (
+        <label className="flex flex-col gap-0.5">
+          <span className="text-gray-400 dark:text-gray-500 ml-1">背景</span>
+          <Select
+            value={params.background}
+            onChange={(val) => setParams({ background: val as any })}
+            options={[
+              { label: 'auto', value: 'auto' },
+              { label: 'opaque', value: 'opaque' },
+              { label: 'transparent', value: 'transparent' },
+            ]}
+            className={selectClass}
+          />
+        </label>
+      )}
+      {isApimartProvider && !isApimartOfficialModel && (
+        <label className="flex flex-col gap-0.5">
+          <span className="text-gray-400 dark:text-gray-500 ml-1">官方兜底</span>
+          <Select
+            value={params.official_fallback ? 'true' : 'false'}
+            onChange={(val) => setParams({ official_fallback: val === 'true' })}
+            options={[
+              { label: '关闭', value: 'false' },
+              { label: '开启', value: 'true' },
+            ]}
+            className={selectClass}
+          />
+        </label>
+      )}
       <label className="relative flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">数量</span>
         <input

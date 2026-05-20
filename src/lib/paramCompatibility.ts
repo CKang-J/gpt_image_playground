@@ -4,13 +4,23 @@ import { normalizeImageSize } from './size'
 
 export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
 export const MAX_FAL_OUTPUT_IMAGES = 4
-export const MAX_APIMART_OUTPUT_IMAGES = 4
+export const MAX_APIMART_GENERATION_OUTPUT_IMAGES = 1
+export const MAX_APIMART_OFFICIAL_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
+function isApimartOfficialModel(model: string) {
+  return model.trim().toLowerCase() === 'gpt-image-2-official'
+}
+
 export function getOutputImageLimitForSettings(settings: AppSettings) {
-  const provider = getActiveApiProfile(settings).provider
+  const activeProfile = getActiveApiProfile(settings)
+  const provider = activeProfile.provider
   if (provider === 'fal') return MAX_FAL_OUTPUT_IMAGES
-  if (provider === 'apimart') return MAX_APIMART_OUTPUT_IMAGES
+  if (provider === 'apimart') {
+    return isApimartOfficialModel(activeProfile.model)
+      ? MAX_APIMART_OFFICIAL_OUTPUT_IMAGES
+      : MAX_APIMART_GENERATION_OUTPUT_IMAGES
+  }
   return MAX_OPENAI_OUTPUT_IMAGES
 }
 
@@ -38,7 +48,13 @@ export function normalizeParamsForSettings(
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
-  if (activeProfile.provider === 'apimart') {
+  if (activeProfile.provider !== 'apimart') {
+    nextParams.background = DEFAULT_PARAMS.background
+    nextParams.official_fallback = DEFAULT_PARAMS.official_fallback
+  } else if (isApimartOfficialModel(activeProfile.model)) {
+    nextParams.official_fallback = DEFAULT_PARAMS.official_fallback
+  } else {
+    nextParams.background = DEFAULT_PARAMS.background
     nextParams.moderation = DEFAULT_PARAMS.moderation
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }

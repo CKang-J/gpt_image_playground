@@ -1,6 +1,7 @@
 import type { ApiProfile, TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
+import { normalizeImageSize } from './size'
 import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
@@ -95,6 +96,71 @@ function readUploadedImageUrl(payload: unknown): string | null {
   return null
 }
 
+const APIMART_SIZE_FIELD_MAP = new Map<string, { size: string; resolution?: string }>([
+  ['1024x1024', { size: '1:1', resolution: '1k' }],
+  ['2048x2048', { size: '1:1', resolution: '2k' }],
+  ['3840x3840', { size: '1:1', resolution: '4k' }],
+  ['1536x1024', { size: '3:2', resolution: '1k' }],
+  ['3072x2048', { size: '3:2', resolution: '2k' }],
+  ['1024x1536', { size: '2:3', resolution: '1k' }],
+  ['2048x3072', { size: '2:3', resolution: '2k' }],
+  ['1365x1024', { size: '4:3', resolution: '1k' }],
+  ['2730x2048', { size: '4:3', resolution: '2k' }],
+  ['1024x1365', { size: '3:4', resolution: '1k' }],
+  ['2048x2730', { size: '3:4', resolution: '2k' }],
+  ['1280x1024', { size: '5:4', resolution: '1k' }],
+  ['2560x2048', { size: '5:4', resolution: '2k' }],
+  ['1024x1280', { size: '4:5', resolution: '1k' }],
+  ['2048x2560', { size: '4:5', resolution: '2k' }],
+  ['1820x1024', { size: '16:9', resolution: '1k' }],
+  ['3640x2048', { size: '16:9', resolution: '2k' }],
+  ['3840x2160', { size: '16:9', resolution: '4k' }],
+  ['1024x1820', { size: '9:16', resolution: '1k' }],
+  ['2048x3640', { size: '9:16', resolution: '2k' }],
+  ['2160x3840', { size: '9:16', resolution: '4k' }],
+  ['2048x1024', { size: '2:1', resolution: '1k' }],
+  ['3840x1920', { size: '2:1', resolution: '2k' }],
+  ['1024x2048', { size: '1:2', resolution: '1k' }],
+  ['1920x3840', { size: '1:2', resolution: '2k' }],
+  ['3072x1024', { size: '3:1', resolution: '1k' }],
+  ['3840x1280', { size: '3:1', resolution: '2k' }],
+  ['1024x3072', { size: '1:3', resolution: '1k' }],
+  ['1280x3840', { size: '1:3', resolution: '2k' }],
+  ['2400x1024', { size: '21:9', resolution: '1k' }],
+  ['3840x1645', { size: '21:9', resolution: '2k' }],
+  ['1024x2400', { size: '9:21', resolution: '1k' }],
+  ['1645x3840', { size: '9:21', resolution: '2k' }],
+])
+
+const APIMART_RATIO_VALUES = new Set([
+  '1:1',
+  '3:2',
+  '2:3',
+  '4:3',
+  '3:4',
+  '5:4',
+  '4:5',
+  '16:9',
+  '9:16',
+  '2:1',
+  '1:2',
+  '3:1',
+  '1:3',
+  '21:9',
+  '9:21',
+])
+
+function isOfficialModel(model: string): boolean {
+  return model.trim().toLowerCase() === 'gpt-image-2-official'
+}
+
+function mapSizeToApimartFields(size: string): { size: string; resolution?: string } {
+  const normalized = normalizeImageSize(size || 'auto')
+  if (!normalized || normalized === 'auto') return { size: 'auto' }
+  if (APIMART_RATIO_VALUES.has(normalized)) return { size: normalized }
+  return APIMART_SIZE_FIELD_MAP.get(normalized) ?? { size: normalized }
+}
+
 async function uploadImage(profile: ApiProfile, blob: Blob, filename: string, signal: AbortSignal): Promise<string> {
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -158,15 +224,26 @@ function createGenerationBody(
   imageUrls: string[],
   maskUrl?: string,
 ): Record<string, unknown> {
+  const sizeFields = mapSizeToApimartFields(params.size)
+  const officialModel = isOfficialModel(profile.model)
   const body: Record<string, unknown> = {
     model: profile.model,
     prompt,
-    size: params.size,
+    ...sizeFields,
     output_format: params.output_format,
     quality: params.quality,
   }
 
   if (params.n > 1) body.n = params.n
+  if (officialModel) {
+    body.background = params.background
+    body.moderation = params.moderation
+    if (params.output_format !== 'png' && params.output_compression != null) {
+      body.output_compression = params.output_compression
+    }
+  } else if (params.official_fallback) {
+    body.official_fallback = true
+  }
   if (imageUrls.length) body.image_urls = imageUrls
   if (maskUrl) body.mask_url = maskUrl
 
