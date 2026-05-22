@@ -1,4 +1,4 @@
-import type { AppSettings, TaskParams } from '../types'
+import type { ApiProfile, AppSettings, TaskParams } from '../types'
 
 export const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -83,7 +83,7 @@ export function assertMaskEditFileSize(label: string, bytes: number) {
   assertMaxBytes(label, bytes, MAX_MASK_EDIT_FILE_BYTES)
 }
 
-async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
+async function blobToDataUrlWithMime(blob: Blob, fallbackMime: string): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer())
   let binary = ''
 
@@ -143,7 +143,7 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
   }
 
   const blob = await response.blob()
-  return blobToDataUrl(blob, fallbackMime)
+  return blobToDataUrlWithMime(blob, fallbackMime)
 }
 
 export async function getApiErrorMessage(response: Response): Promise<string> {
@@ -208,4 +208,62 @@ export function pickActualParams(source: unknown): Partial<TaskParams> {
 export function mergeActualParams(...sources: Array<Partial<TaskParams> | undefined>): Partial<TaskParams> | undefined {
   const merged = Object.assign({}, ...sources.filter((source) => source && Object.keys(source).length))
   return Object.keys(merged).length ? merged : undefined
+}
+
+export function getByPath(source: unknown, path: string | undefined): unknown {
+  if (!path) return source
+  return path.split('.').filter(Boolean).reduce<unknown>((current, key) => {
+    if (current == null) return undefined
+    if (/^\d+$/.test(key) && Array.isArray(current)) return current[Number(key)]
+    if (typeof current === 'object') return (current as Record<string, unknown>)[key]
+    return undefined
+  }, source)
+}
+
+export function getAllByPath(source: unknown, path: string | undefined): unknown[] {
+  if (!path) return [source]
+  const parts = path.split('.').filter(Boolean)
+  let current: unknown[] = [source]
+
+  for (const key of parts) {
+    const next: unknown[] = []
+    for (const item of current) {
+      if (item == null) continue
+      if (key === '*') {
+        if (Array.isArray(item)) next.push(...item)
+        else if (typeof item === 'object') next.push(...Object.values(item as Record<string, unknown>))
+        continue
+      }
+      if (/^\d+$/.test(key) && Array.isArray(item)) {
+        next.push(item[Number(key)])
+        continue
+      }
+      if (typeof item === 'object') next.push((item as Record<string, unknown>)[key])
+    }
+    current = next
+  }
+
+  return current.flatMap((item) => Array.isArray(item) ? item : [item]).filter((item) => item != null)
+}
+
+export function createRequestHeaders(profile: ApiProfile): Record<string, string> {
+  return { Authorization: `Bearer ${profile.apiKey}` }
+}
+
+export function readTaskImageUrls(payload: unknown): string[] {
+  return getAllByPath(payload, 'data.result.images.*.url.*').filter(isHttpUrl)
+}
+
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }, { once: true })
+  })
 }

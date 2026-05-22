@@ -7,6 +7,7 @@ import { storeImage } from '../lib/db'
 import { prepareMaskTargetDataUrl, replaceMaskTargetImage } from '../lib/maskPreprocess'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
+import { blobToDataUrl } from '../lib/utils'
 import {
   clampViewTransform,
   clientPointToCanvasPoint,
@@ -89,15 +90,6 @@ function drawMaskImageToCanvas(maskImage: HTMLImageElement, maskCanvas: HTMLCanv
   maskCtx.imageSmoothingEnabled = true
   maskCtx.imageSmoothingQuality = 'high'
   maskCtx.drawImage(maskImage, 0, 0, maskCanvas.width, maskCanvas.height)
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('图片导出失败'))
-    reader.readAsDataURL(blob)
-  })
 }
 
 export default function MaskEditorModal() {

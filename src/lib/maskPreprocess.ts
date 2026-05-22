@@ -1,5 +1,6 @@
 import type { InputImage } from '../types'
 import { canvasToBlob, loadImage } from './canvasImage'
+import { blobToDataUrl, floorToMultiple } from './utils'
 
 export const DEFAULT_MASK_WORKING_MAX_EDGE = 1920
 export const MASK_WORKING_DIMENSION_MULTIPLE = 16
@@ -16,19 +17,6 @@ export interface PreparedMaskTarget extends MaskWorkingSize {
   originalWidth: number
   originalHeight: number
   wasConvertedToPng: boolean
-}
-
-function floorToMultiple(value: number, multiple: number): number {
-  return Math.max(multiple, Math.floor(value / multiple) * multiple)
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('图片导出失败'))
-    reader.readAsDataURL(blob)
-  })
 }
 
 export function calculateMaskWorkingSize(

@@ -6,8 +6,11 @@ import {
   assertMaskEditFileSize,
   type CallApiOptions,
   type CallApiResult,
+  createRequestHeaders,
   fetchImageUrlAsDataUrl,
   getApiErrorMessage,
+  getByPath,
+  getAllByPath,
   getDataUrlDecodedByteSize,
   getDataUrlEncodedByteSize,
   isDataUrl,
@@ -17,9 +20,9 @@ import {
   normalizeBase64Image,
   pickActualParams,
   readJsonResponse,
+  readTaskImageUrls,
+  sleep,
 } from './imageApiShared'
-
-const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
 function appendQuery(path: string, query?: Record<string, string>): string {
   if (!query || !Object.keys(query).length) return path
@@ -35,49 +38,11 @@ function createOpenAICompatiblePaths(customProvider?: CustomProviderDefinition |
   }
 }
 
-function getByPath(source: unknown, path: string | undefined): unknown {
-  if (!path) return source
-  return path.split('.').filter(Boolean).reduce<unknown>((current, key) => {
-    if (current == null) return undefined
-    if (/^\d+$/.test(key) && Array.isArray(current)) return current[Number(key)]
-    if (typeof current === 'object') return (current as Record<string, unknown>)[key]
-    return undefined
-  }, source)
-}
-
-function getAllByPath(source: unknown, path: string | undefined): unknown[] {
-  if (!path) return [source]
-  const parts = path.split('.').filter(Boolean)
-  let current: unknown[] = [source]
-
-  for (const key of parts) {
-    const next: unknown[] = []
-    for (const item of current) {
-      if (item == null) continue
-      if (key === '*') {
-        if (Array.isArray(item)) next.push(...item)
-        else if (typeof item === 'object') next.push(...Object.values(item as Record<string, unknown>))
-        continue
-      }
-      if (/^\d+$/.test(key) && Array.isArray(item)) {
-        next.push(item[Number(key)])
-        continue
-      }
-      if (typeof item === 'object') next.push((item as Record<string, unknown>)[key])
-    }
-    current = next
-  }
-
-  return current.flatMap((item) => Array.isArray(item) ? item : [item]).filter((item) => item != null)
-}
+const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
 function readTaskIdFromImagesPayload(payload: ImageApiResponse): string | null {
   const taskId = payload.data?.find((item) => typeof item.task_id === 'string' && item.task_id.trim())?.task_id
   return taskId?.trim() || null
-}
-
-function readTaskImageUrls(payload: unknown): string[] {
-  return getAllByPath(payload, 'data.result.images.*.url.*').filter(isHttpUrl)
 }
 
 function getOpenAICompatibleTaskState(payload: unknown): 'success' | 'failure' | 'pending' {
@@ -92,12 +57,6 @@ function normalizeImageApiPayload(value: unknown): ImageApiResponse {
   if (Array.isArray(value)) return { data: value as ImageApiResponse['data'] }
   if (value && typeof value === 'object') return value as ImageApiResponse
   return { data: [] }
-}
-
-function createRequestHeaders(profile: ApiProfile): Record<string, string> {
-  return {
-    Authorization: `Bearer ${profile.apiKey}`,
-  }
 }
 
 function createResponsesImageTool(
@@ -476,20 +435,6 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
   } finally {
     clearTimeout(timeoutId)
   }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }, { once: true })
-  })
 }
 
 function getTaskState(payload: unknown, poll: CustomProviderPollMapping): 'success' | 'failure' | 'pending' {

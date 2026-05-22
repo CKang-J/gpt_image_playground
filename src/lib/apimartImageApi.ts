@@ -7,64 +7,16 @@ import {
   assertMaskEditFileSize,
   type CallApiOptions,
   type CallApiResult,
+  createRequestHeaders,
   fetchImageUrlAsDataUrl,
   getApiErrorMessage,
+  getByPath,
+  isHttpUrl,
   MIME_MAP,
   readJsonResponse,
+  readTaskImageUrls,
+  sleep,
 } from './imageApiShared'
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }, { once: true })
-  })
-}
-
-function getByPath(source: unknown, path: string | undefined): unknown {
-  if (!path) return source
-  return path.split('.').filter(Boolean).reduce<unknown>((current, key) => {
-    if (current == null) return undefined
-    if (/^\d+$/.test(key) && Array.isArray(current)) return current[Number(key)]
-    if (typeof current === 'object') return (current as Record<string, unknown>)[key]
-    return undefined
-  }, source)
-}
-
-function getAllByPath(source: unknown, path: string): unknown[] {
-  const parts = path.split('.').filter(Boolean)
-  let current: unknown[] = [source]
-
-  for (const key of parts) {
-    const next: unknown[] = []
-    for (const item of current) {
-      if (item == null) continue
-      if (key === '*') {
-        if (Array.isArray(item)) next.push(...item)
-        else if (typeof item === 'object') next.push(...Object.values(item as Record<string, unknown>))
-        continue
-      }
-      if (/^\d+$/.test(key) && Array.isArray(item)) {
-        next.push(item[Number(key)])
-        continue
-      }
-      if (typeof item === 'object') next.push((item as Record<string, unknown>)[key])
-    }
-    current = next
-  }
-
-  return current.flatMap((item) => Array.isArray(item) ? item : [item]).filter((item) => item != null)
-}
-
-function createRequestHeaders(profile: ApiProfile): Record<string, string> {
-  return { Authorization: `Bearer ${profile.apiKey}` }
-}
 
 function readTaskId(payload: unknown): string | null {
   const value = getByPath(payload, 'data.0.task_id') ?? getByPath(payload, 'task_id')
@@ -80,18 +32,12 @@ function readTaskState(payload: unknown): 'success' | 'failure' | 'pending' {
   return 'pending'
 }
 
-function readTaskImageUrls(payload: unknown): string[] {
-  return getAllByPath(payload, 'data.result.images.*.url.*').filter((value): value is string =>
-    typeof value === 'string' && /^https?:\/\//i.test(value),
-  )
-}
-
 function readUploadedImageUrl(payload: unknown): string | null {
   const direct = getByPath(payload, 'url')
-  if (typeof direct === 'string' && /^https?:\/\//i.test(direct)) return direct
+  if (isHttpUrl(direct)) return direct
 
   const nested = getByPath(payload, 'data.url')
-  if (typeof nested === 'string' && /^https?:\/\//i.test(nested)) return nested
+  if (isHttpUrl(nested)) return nested
 
   return null
 }

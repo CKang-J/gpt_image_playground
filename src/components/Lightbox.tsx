@@ -3,13 +3,10 @@ import { useStore, getCachedImage, ensureImageCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { clamp } from '../lib/utils'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v))
-}
 
 export default function Lightbox() {
   const lightboxImageId = useStore((s) => s.lightboxImageId)

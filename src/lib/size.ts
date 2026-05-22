@@ -1,3 +1,5 @@
+import { floorToMultiple } from './utils'
+
 const SIZE_PATTERN = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/
 const RATIO_PATTERN = /^\s*(\d+(?:\.\d+)?)\s*[:xX×]\s*(\d+(?:\.\d+)?)\s*$/
 const SIZE_MULTIPLE = 16
@@ -10,10 +12,6 @@ export type SizeTier = '1K' | '2K' | '4K'
 
 function roundToMultiple(value: number, multiple: number) {
   return Math.max(multiple, Math.round(value / multiple) * multiple)
-}
-
-function floorToMultiple(value: number, multiple: number) {
-  return Math.max(multiple, Math.floor(value / multiple) * multiple)
 }
 
 function ceilToMultiple(value: number, multiple: number) {
