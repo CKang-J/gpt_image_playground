@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { useStore, addImageFromUrl, ensureImageCached } from '../store'
+import { useStore } from '../store'
+import { addImageFromUrl } from '../lib/dataIO'
+import { ensureImageCached } from '../lib/imageCache'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 

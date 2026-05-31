@@ -51,7 +51,8 @@ vi.mock('./lib/db', () => {
   }
 })
 import { clearImages, putImage } from './lib/db'
-import { editOutputs, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, reuseConfig, submitTask, useStore } from './store'
+import { editOutputs, getTaskApiProfile, markInterruptedOpenAIRunningTasks, reuseConfig, submitTask } from './lib/taskLifecycle'
+import { getPersistedState, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { initStore } from './store'
+import { initStore } from './lib/taskLifecycle'
 import { useStore } from './store'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'

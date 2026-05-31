@@ -2,6 +2,7 @@ import type { ApiProfile, AppSettings, TaskParams } from '../types'
 
 export const MIME_MAP: Record<string, string> = {
   png: 'image/png',
+  jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
 }

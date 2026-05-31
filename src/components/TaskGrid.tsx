@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
+import { useStore } from '../store'
+import { reuseConfig, editOutputs, removeTask } from '../lib/taskLifecycle'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {

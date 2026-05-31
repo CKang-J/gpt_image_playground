@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { useStore, getCachedImage, ensureImageCached } from '../store'
+import { useStore } from '../store'
+import { getCachedImage, ensureImageCached } from '../lib/imageCache'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'

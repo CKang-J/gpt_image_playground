@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
-import { useStore, exportData, importData, clearData } from '../store'
+import { useStore } from '../store'
+import { exportData, importData, clearData } from '../lib/dataIO'
 import {
   createDefaultApimartProfile,
   createDefaultOpenAIProfile,
